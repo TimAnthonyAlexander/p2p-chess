@@ -35,7 +35,7 @@ async function handleResponse<T>(response: Response): Promise<APIResponse<T>> {
     return { error: errorMsg };
   }
 
-  return { data };
+  return { data: data as T };
 }
 
 // Helper function for API requests with authorization
