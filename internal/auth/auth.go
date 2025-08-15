@@ -15,13 +15,14 @@ import (
 
 var key jwk.Key // TODO: Load from env or file
 
-func GenerateToken(userID string) (string, error) {
+func GenerateToken(userID string, role string) (string, error) {
 	tok, err := jwt.NewBuilder().
 		Issuer("p2p-chess").
 		Audience([]string{"p2p-chess"}).
 		Subject(userID).
 		IssuedAt(time.Now()).
-		Expiration(time.Now().Add(15 * time.Minute)).
+		Expiration(time.Now().Add(15*time.Minute)).
+		Claim("role", role). // Add role claim
 		Build()
 	if err != nil {
 		return "", err
@@ -72,7 +73,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	token, err := GenerateToken(userID)
+	token, err := GenerateToken(userID, "user") // Default role for now
 	if err != nil {
 		http.Error(w, "Error generating token", http.StatusInternalServerError)
 		return

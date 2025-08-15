@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 
 	"p2p-chess/internal/store"
 
 	"crypto/rand"
 	"encoding/base64"
+	"time"
 
-	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi"
 	"github.com/gofrs/uuid"
 )
 
@@ -101,6 +103,14 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 		"matchKey":  matchKeyStr,
 		"joinToken": joinToken,
 		// "webrtcConfig": ...
+	}
+	turnSecret := os.Getenv("TURN_SECRET")
+	iceCreds := generateTURNCreds(userID, 10*time.Minute, turnSecret)
+	response["webrtcConfig"] = map[string]interface{}{
+		"iceServers": []map[string]interface{}{
+			{"urls": "stun:your.stun.server:3478"},
+			{"urls": "turn:your.turn.server:3478", "username": iceCreds["username"], "credential": iceCreds["password"]},
+		},
 	}
 	json.NewEncoder(w).Encode(response)
 }

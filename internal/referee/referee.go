@@ -48,6 +48,14 @@ func ValidateMoveWithOutcome(fenStr string, uciMove string) (*ValidationResult, 
 	return &ValidationResult{Valid: false}, fmt.Errorf("illegal move: %s", uciMove)
 }
 
+func ValidateMove(fen, uci string) (string, error) {
+	res, err := ValidateMoveWithOutcome(fen, uci)
+	if err != nil {
+		return "", err
+	}
+	return res.NewFEN, nil
+}
+
 func ComputeZobrist(fen string) string {
 	hash := sha256.Sum256([]byte(fen))
 	return hex.EncodeToString(hash[:])
@@ -157,12 +165,13 @@ func AppendHandler(w http.ResponseWriter, r *http.Request) {
 		reason := string(result.Method)
 		resultStr := string(result.Outcome)
 		_, err = s.DB.Exec(r.Context(), "UPDATE matches SET status = 'finished', result = $1, reason = $2, finished_at = NOW() WHERE id = $3", resultStr, reason, matchID)
-		if err != nil {
-			// log error
-		}
-		// TODO: Notify via WS
 		if err == nil {
-			s.UpdateRatings(matchID)
+			// Fetch white and black IDs
+			var whiteID, blackID string
+			err = s.DB.QueryRow(r.Context(), "SELECT side_white, side_black FROM matches WHERE id = $1", matchID).Scan(&whiteID, &blackID)
+			if err == nil {
+				s.UpdateRatings(matchID) // Already fetches, but ensure
+			}
 		}
 	}
 
