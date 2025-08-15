@@ -3,10 +3,12 @@ package lobby
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"p2p-chess/internal/store"
 
@@ -26,16 +28,26 @@ func EnqueueQuickplay(s *store.Store, userID string, tc string, rated bool) erro
 	return s.Redis.RPush(context.Background(), queue, userID).Err()
 }
 
+var ErrNoPair = errors.New("no pair")
+
 func PairUsers(s *store.Store, tc string, rated bool) (string, string, error) {
 	queue := fmt.Sprintf("lobby:q:%s:%t", tc, rated)
 	users, err := s.Redis.LPopCount(context.Background(), queue, 2).Result()
-	if err != nil || len(users) < 2 {
+	if err != nil {
 		return "", "", err
 	}
-	// Create match
-	matchID := uuid.Must(uuid.NewV4()).String()
-	_ = matchID
-	// TODO: Use store to insert into matches table
+	if len(users) < 2 {
+		return "", "", ErrNoPair
+	}
+
+	// Validate both are valid UUIDs
+	if _, err := uuid.FromString(users[0]); err != nil {
+		return "", "", fmt.Errorf("invalid white uuid: %w", err)
+	}
+	if _, err := uuid.FromString(users[1]); err != nil {
+		return "", "", fmt.Errorf("invalid black uuid: %w", err)
+	}
+
 	return users[0], users[1], nil
 }
 
@@ -44,14 +56,36 @@ type QuickplayRequest struct {
 	Rated bool   `json:"rated"`
 }
 
+// TODO: Implement proper JWT validation with auth package
+func userIDFromAuth(r *http.Request) (string, error) {
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, "Bearer ") {
+		return "", errors.New("no bearer")
+	}
+
+	// Temporary implementation - extract user from context
+	// In production, this should be replaced with proper JWT validation
+	userID := r.Context().Value("user_id")
+	if userID == nil {
+		return "", errors.New("no user in context")
+	}
+
+	return fmt.Sprint(userID), nil
+}
+
 func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	var req QuickplayRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	// TODO: Get userID from auth context
-	userID := "user_id_placeholder"
+
+	uid, err := userIDFromAuth(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	userID := uid
 
 	s, err := store.New()
 	if err != nil {
@@ -68,7 +102,12 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	// Pairing logic (might need a separate worker, but for now synchronous)
 	white, black, err := PairUsers(s, req.TC, req.Rated)
 	if err != nil {
-		http.Error(w, "No pair", http.StatusAccepted) // Wait or retry
+		if errors.Is(err, ErrNoPair) {
+			http.Error(w, "No pair", http.StatusAccepted) // Wait or retry
+			return
+		}
+		log.Printf("pairing error: %v", err)
+		http.Error(w, "Queue error", http.StatusInternalServerError)
 		return
 	}
 
@@ -79,6 +118,19 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	delayMs := 0
 	msWhite := baseMs
 	msBlack := baseMs
+
+	// Extra validation for player UUIDs
+	if _, err := uuid.FromString(white); err != nil {
+		http.Error(w, "Invalid white player ID", http.StatusInternalServerError)
+		return
+	}
+	if _, err := uuid.FromString(black); err != nil {
+		http.Error(w, "Invalid black player ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Log for debugging
+	log.Printf("pair: white=%q black=%q tc=%s rated=%t", white, black, req.TC, req.Rated)
 
 	// Insert into DB
 	_, err = s.DB.Exec(r.Context(), "INSERT INTO matches (id, side_white, side_black, tc_base_ms, tc_inc_ms, tc_delay_ms, status, side_to_move, last_fen, ms_white, ms_black, rated) VALUES ($1, $2, $3, $4, $5, $6, 'live', 'w', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', $7, $8, $9)",
