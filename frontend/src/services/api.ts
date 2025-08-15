@@ -1,4 +1,4 @@
-import type { APIResponse, MatchConfig, MatchDetails, User } from '../types/index.ts';
+import type { APIResponse, MatchConfig, MatchDetails, User } from '../types';
 
 // Configure API base URL - can be updated in production env
 const API_BASE_URL = 'http://localhost:8081';

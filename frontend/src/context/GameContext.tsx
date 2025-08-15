@@ -1,6 +1,6 @@
 import { createContext, useContext, ReactNode, useState } from 'react';
 import { Chess } from 'chess.js';
-import { GameState, MatchDetails, WebRTCMessage } from '../types/index.ts';
+import type { GameState, MatchDetails, WebRTCMessage } from '../types';
 import WebRTCService from '../services/webrtc';
 import { findMatch, generateHMAC, submitMove } from '../services/api';
 

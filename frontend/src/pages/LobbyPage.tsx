@@ -5,7 +5,7 @@ import { useGame } from '../context/GameContext';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Select from '../components/Select';
-import { TimeControl } from '../types/index.ts';
+import type { TimeControl } from '../types';
 
 const LobbyPage = () => {
   const { user, logout } = useAuth();
