@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -59,6 +60,7 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := EnqueueQuickplay(s, userID, req.TC, req.Rated); err != nil {
+		log.Printf("enqueue error: %v", err)
 		http.Error(w, "Queue error", http.StatusInternalServerError)
 		return
 	}
@@ -82,6 +84,7 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	_, err = s.DB.Exec(r.Context(), "INSERT INTO matches (id, side_white, side_black, tc_base_ms, tc_inc_ms, tc_delay_ms, status, side_to_move, last_fen, ms_white, ms_black, rated) VALUES ($1, $2, $3, $4, $5, $6, 'live', 'w', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', $7, $8, $9)",
 		matchID, white, black, baseMs, incMs, delayMs, msWhite, msBlack, req.Rated)
 	if err != nil {
+		log.Printf("db insert error: %T %v", err, err)
 		http.Error(w, "DB error", http.StatusInternalServerError)
 		return
 	}

@@ -21,9 +21,11 @@ func New() (*Store, error) {
 		return nil, err
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr: os.Getenv("REDIS_URL"),
-	})
+	opt, err := redis.ParseURL(os.Getenv("REDIS_URL"))
+	if err != nil {
+		return nil, err
+	}
+	rdb := redis.NewClient(opt)
 
 	return &Store{DB: db, Redis: rdb}, nil
 }
