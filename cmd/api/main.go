@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"p2p-chess/internal/http"
+	apihttp "p2p-chess/internal/http"
 	"p2p-chess/internal/store"
 )
 
@@ -19,6 +19,6 @@ func main() {
 	}
 	// TODO: Init JWT keys, etc.
 
-	router := http.NewRouter()
+	router := apihttp.NewRouter()
 	log.Fatal(http.ListenAndServe(":8080", router))
 }

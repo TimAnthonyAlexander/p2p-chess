@@ -13,6 +13,9 @@ import (
 	"encoding/base64"
 	"time"
 
+	"crypto/hmac"
+	"crypto/sha1"
+
 	"github.com/go-chi/chi"
 	"github.com/gofrs/uuid"
 )
@@ -152,3 +155,15 @@ func ResumeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // TODO: More logic for signaling, presence
+
+func generateTURNCreds(userID string, ttl time.Duration, secret string) map[string]string {
+	expiry := time.Now().Add(ttl).Unix()
+	username := fmt.Sprintf("%d:%s", expiry, userID)
+	h := hmac.New(sha1.New, []byte(secret))
+	h.Write([]byte(username))
+	password := base64.StdEncoding.EncodeToString(h.Sum(nil))
+	return map[string]string{
+		"username": username,
+		"password": password,
+	}
+}

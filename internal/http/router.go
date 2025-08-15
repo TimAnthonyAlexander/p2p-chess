@@ -113,7 +113,7 @@ func AdminMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func RateLimitMiddleware(limit rate.Limit, burst int) chi.Middleware {
+func RateLimitMiddleware(limit rate.Limit, burst int) func(http.Handler) http.Handler {
 	limiter := rate.NewLimiter(limit, burst)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
