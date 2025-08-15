@@ -12,14 +12,27 @@ async function handleResponse<T>(response: Response): Promise<APIResponse<T>> {
     return {}; // No content
   }
 
-  // Try to parse response as JSON, fall back to text if it fails
+  // Try to parse response as JSON first, regardless of content type
   let data: unknown;
-  const contentType = response.headers.get('content-type');
+  let responseText: string;
   
-  if (contentType?.includes('application/json')) {
-    data = await response.json();
-  } else {
-    data = await response.text();
+  try {
+    // First get the response as text
+    responseText = await response.text();
+    console.log('Raw response:', responseText);
+    
+    // Try to parse as JSON
+    try {
+      data = JSON.parse(responseText);
+      console.log('Parsed as JSON:', data);
+    } catch (jsonError) {
+      // If JSON parsing fails, use the raw text
+      console.log('Not valid JSON, using as text');
+      data = responseText;
+    }
+  } catch (error) {
+    console.error('Error getting API response:', error);
+    return { error: 'Error reading server response' };
   }
 
   if (!response.ok) {

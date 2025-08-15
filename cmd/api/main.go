@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"p2p-chess/internal/auth"
 	apihttp "p2p-chess/internal/http"
 	"p2p-chess/internal/store"
 
@@ -23,7 +24,11 @@ func main() {
 	if err := store.RunMigrations(dsn); err != nil {
 		log.Fatal("Migration error: ", err)
 	}
-	// TODO: Init JWT keys, etc.
+
+	// Initialize auth module
+	if err := auth.Init(); err != nil {
+		log.Fatal("Auth initialization error: ", err)
+	}
 
 	router := apihttp.NewRouter()
 	log.Println("Server starting on :8081")
