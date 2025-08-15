@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGame } from '../context/GameContext';
 import { useAuth } from '../context/AuthContext';
 import { Chessboard } from 'react-chessboard';
-import { Square } from 'chess.js';
+import type { Square } from 'chess.js';
 import Button from '../components/Button';
 import Card from '../components/Card';
 
@@ -31,7 +31,7 @@ const GamePage = () => {
   
   // Manage clock countdown
   useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
+    let timer: number | null = null;
     
     // Only count down if the game is in progress
     if (!gameState.result && gameState.matchId) {
@@ -84,7 +84,7 @@ const GamePage = () => {
   
   // Handle piece movement
   const onDrop = useCallback(
-    async (sourceSquare: Square, targetSquare: Square) => {
+    (sourceSquare: Square, targetSquare: Square) => {
       // Check if it's our turn
       if (!gameState.isMyTurn || gameState.result) {
         return false;
@@ -117,13 +117,23 @@ const GamePage = () => {
       // If the move is invalid, return false
       if (!move) return false;
       
-      // Make the move
-      const success = await makeMove(sourceSquare, targetSquare, promotion);
+      // Optimistically make the move on the local board
+      const previousFen = chess.fen();
+      chess.move(move);
+      
+      // Send the move async and rollback if fails
+      makeMove(sourceSquare, targetSquare, promotion).then(success => {
+        if (!success) {
+          // Rollback if server rejects
+          chess.load(previousFen);
+        }
+      });
       
       // Reset promotion state
       setPromotion(undefined);
       
-      return success;
+      // Return true to apply the optimistic move immediately
+      return true;
     },
     [chess, gameState.isMyTurn, gameState.result, makeMove, promotion]
   );
