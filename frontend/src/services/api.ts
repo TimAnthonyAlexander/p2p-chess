@@ -1,4 +1,4 @@
-import { APIResponse, MatchConfig, MatchDetails, User } from '../types';
+import type { APIResponse, MatchConfig, MatchDetails, User } from '../types/index.ts';
 
 // Configure API base URL - can be updated in production env
 const API_BASE_URL = 'http://localhost:8081';
@@ -13,7 +13,7 @@ async function handleResponse<T>(response: Response): Promise<APIResponse<T>> {
   }
 
   // Try to parse response as JSON, fall back to text if it fails
-  let data: any;
+  let data: unknown;
   const contentType = response.headers.get('content-type');
   
   if (contentType?.includes('application/json')) {
@@ -23,9 +23,16 @@ async function handleResponse<T>(response: Response): Promise<APIResponse<T>> {
   }
 
   if (!response.ok) {
-    return {
-      error: data.error || data.message || `Error: ${response.status}`
-    };
+    let errorMsg = `Error: ${response.status}`;
+    if (typeof data === 'string') {
+      errorMsg = data;
+    } else if (data && typeof data === 'object') {
+      const obj = data as Record<string, unknown>;
+      errorMsg = (typeof obj.error === 'string' ? obj.error : undefined) ||
+                 (typeof obj.message === 'string' ? obj.message : undefined) ||
+                 errorMsg;
+    }
+    return { error: errorMsg };
   }
 
   return { data };
@@ -99,7 +106,7 @@ export async function submitMove(
   matchId: string, 
   move: string, 
   signature: string
-): Promise<APIResponse<any>> {
+): Promise<APIResponse<unknown>> {
   return fetchWithAuth(
     buildUrl(`/v1/match/${matchId}/append`),
     {
@@ -112,7 +119,7 @@ export async function submitMove(
   );
 }
 
-export async function resumeMatch(matchId: string): Promise<APIResponse<any>> {
+export async function resumeMatch(matchId: string): Promise<APIResponse<unknown>> {
   return fetchWithAuth(
     buildUrl(`/v1/match/${matchId}/resume`),
     {

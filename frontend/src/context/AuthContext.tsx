@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { login as apiLogin, register as apiRegister } from '../services/api';
-import { AuthState, User } from '../types';
+import { AuthState, User } from '../types/index.ts';
 
 interface AuthContextType extends AuthState {
   login: (handle: string, password: string) => Promise<boolean>;

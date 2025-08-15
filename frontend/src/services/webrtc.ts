@@ -1,4 +1,4 @@
-import { MatchDetails, WebRTCMessage } from "../types";
+import { MatchDetails, WebRTCMessage } from "../types/index.ts";
 
 class WebRTCService {
   private peerConnection: RTCPeerConnection | null = null;
