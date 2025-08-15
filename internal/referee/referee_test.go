@@ -6,6 +6,7 @@ import (
 	"p2p-chess/internal/referee"
 	"testing"
 
+	chess "github.com/corentings/chess/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,11 +26,12 @@ func TestInvalidMove(t *testing.T) {
 }
 
 func TestCheckmateOutcome(t *testing.T) {
-	fen := "rnb1kbnr/ppppqQpp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1" // Black in checkmate
-	result, err := referee.ValidateMoveWithOutcome(fen, "e8d8")       // Invalid escape
-	assert.Error(t, err)
-	assert.False(t, result.Valid)
-	// For a valid move leading to mate, but since it's checkmate, no valid moves
+	fen := "rnb1kbnr/ppp3pp/8/7Q/2B5/8/PPP1PPPP/RNBQKBNR w KQkq - 0 1" // Position before checkmate
+	result, err := referee.ValidateMoveWithOutcome(fen, "h5f7")
+	assert.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.Equal(t, chess.WhiteWon, result.Outcome)
+	assert.Equal(t, chess.Checkmate, result.Method)
 }
 
 // Clock tests
