@@ -22,13 +22,13 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
 		o := r.Header.Get("Origin")
-		return o == "http://localhost:5174" || o == "http://localhost:5174/"
+		return o == "http://localhost:5173" || o == "http://localhost:5173/"
 	},
 }
 
 func writeCORS(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
-	if origin == "http://localhost:5174" || origin == "http://localhost:5174/" {
+	if origin == "http://localhost:5173" || origin == "http://localhost:5173/" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")

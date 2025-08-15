@@ -75,28 +75,46 @@ type QuickplayRequest struct {
 
 func userIDFromAuth(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
+	log.Printf("Authorization header: %s", h)
+
 	if !strings.HasPrefix(h, "Bearer ") {
+		log.Printf("Auth error: missing Bearer prefix")
 		return "", errors.New("no bearer")
 	}
 	raw := strings.TrimPrefix(h, "Bearer ")
 
+	// Log the first few characters of the token for debugging
+	if len(raw) > 10 {
+		log.Printf("Token prefix: %s...", raw[:10])
+	}
+
 	tok, err := auth.ValidateToken(raw)
 	if err != nil {
+		log.Printf("Token validation error: %T %v", err, err)
 		return "", err
 	}
+
 	sub := tok.Subject()
+	log.Printf("Token subject: %q", sub)
+
 	if sub == "" {
+		log.Printf("Auth error: empty subject")
 		return "", errors.New("no sub")
 	}
 	return sub, nil
 }
 
 func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("QuickplayHandler called with method: %s", r.Method)
+
 	var req QuickplayRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Request decode error: %v", err)
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+
+	log.Printf("Request data: tc=%s rated=%t", req.TC, req.Rated)
 
 	// Validate TC format upfront (optional but helps catch errors early)
 	if req.TC == "" {
@@ -104,11 +122,17 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if auth package is initialized
+	token := r.Header.Get("Authorization")
+	log.Printf("Raw Authorization header: %q", token)
+
 	uid, err := userIDFromAuth(r)
 	if err != nil {
+		log.Printf("Authentication error: %v", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("Authenticated user ID: %s", uid)
 	userID := uid
 
 	s, err := store.New()
