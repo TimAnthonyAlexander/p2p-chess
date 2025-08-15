@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"p2p-chess/internal/auth"
 	"p2p-chess/internal/store"
 
 	"crypto/rand"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/gofrs/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 func EnqueueQuickplay(s *store.Store, userID string, tc string, rated bool) error {
@@ -30,25 +32,40 @@ func EnqueueQuickplay(s *store.Store, userID string, tc string, rated bool) erro
 
 var ErrNoPair = errors.New("no pair")
 
+var popTwoScript = redis.NewScript(`
+local k = KEYS[1]
+if redis.call('LLEN', k) >= 2 then
+  local a = redis.call('LPOP', k)
+  local b = redis.call('LPOP', k)
+  return {a, b}
+else
+  return {}
+end`)
+
 func PairUsers(s *store.Store, tc string, rated bool) (string, string, error) {
 	queue := fmt.Sprintf("lobby:q:%s:%t", tc, rated)
-	users, err := s.Redis.LPopCount(context.Background(), queue, 2).Result()
+	res, err := popTwoScript.Run(context.Background(), s.Redis, []string{queue}).Result()
 	if err != nil {
 		return "", "", err
 	}
-	if len(users) < 2 {
+
+	arr, _ := res.([]interface{})
+	if len(arr) < 2 {
 		return "", "", ErrNoPair
 	}
 
+	w := arr[0].(string)
+	b := arr[1].(string)
+
 	// Validate both are valid UUIDs
-	if _, err := uuid.FromString(users[0]); err != nil {
+	if _, err := uuid.FromString(w); err != nil {
 		return "", "", fmt.Errorf("invalid white uuid: %w", err)
 	}
-	if _, err := uuid.FromString(users[1]); err != nil {
+	if _, err := uuid.FromString(b); err != nil {
 		return "", "", fmt.Errorf("invalid black uuid: %w", err)
 	}
 
-	return users[0], users[1], nil
+	return w, b, nil
 }
 
 type QuickplayRequest struct {
@@ -56,27 +73,34 @@ type QuickplayRequest struct {
 	Rated bool   `json:"rated"`
 }
 
-// TODO: Implement proper JWT validation with auth package
 func userIDFromAuth(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
 	if !strings.HasPrefix(h, "Bearer ") {
 		return "", errors.New("no bearer")
 	}
+	raw := strings.TrimPrefix(h, "Bearer ")
 
-	// Temporary implementation - extract user from context
-	// In production, this should be replaced with proper JWT validation
-	userID := r.Context().Value("user_id")
-	if userID == nil {
-		return "", errors.New("no user in context")
+	tok, err := auth.ValidateToken(raw)
+	if err != nil {
+		return "", err
 	}
-
-	return fmt.Sprint(userID), nil
+	sub := tok.Subject()
+	if sub == "" {
+		return "", errors.New("no sub")
+	}
+	return sub, nil
 }
 
 func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 	var req QuickplayRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate TC format upfront (optional but helps catch errors early)
+	if req.TC == "" {
+		http.Error(w, "Invalid time control", http.StatusBadRequest)
 		return
 	}
 
