@@ -26,5 +26,6 @@ func main() {
 	// TODO: Init JWT keys, etc.
 
 	router := apihttp.NewRouter()
-	log.Fatal(http.ListenAndServe(":8080", router))
+	log.Println("Server starting on :8081")
+	log.Fatal(http.ListenAndServe(":8081", router))
 }
