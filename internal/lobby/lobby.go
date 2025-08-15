@@ -25,26 +25,51 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func EnqueueQuickplay(s *store.Store, userID string, tc string, rated bool) error {
-	queue := fmt.Sprintf("lobby:q:%s:%t", tc, rated)
-	return s.Redis.RPush(context.Background(), queue, userID).Err()
+func queueKeys(tc string, rated bool) (string, string) {
+	return fmt.Sprintf("lobby:q:%s:%t", tc, rated), fmt.Sprintf("lobby:m:%s:%t", tc, rated)
+}
+
+var enqueueOnceScript = redis.NewScript(`
+local q = KEYS[1]
+local m = KEYS[2]
+local u = ARGV[1]
+if redis.call('SISMEMBER', m, u) == 1 then
+  return 0
+end
+redis.call('SADD', m, u)
+redis.call('RPUSH', q, u)
+return 1
+`)
+
+func EnqueueQuickplay(s *store.Store, userID string, tc string, rated bool) (bool, error) {
+	q, m := queueKeys(tc, rated)
+	n, err := enqueueOnceScript.Run(context.Background(), s.Redis, []string{q, m}, userID).Int()
+	return n == 1, err
 }
 
 var ErrNoPair = errors.New("no pair")
 
-var popTwoScript = redis.NewScript(`
-local k = KEYS[1]
-if redis.call('LLEN', k) >= 2 then
-  local a = redis.call('LPOP', k)
-  local b = redis.call('LPOP', k)
-  return {a, b}
-else
+var popTwoDistinctScript = redis.NewScript(`
+local q = KEYS[1]
+local m = KEYS[2]
+if redis.call('LLEN', q) < 2 then
   return {}
-end`)
+end
+local a = redis.call('LPOP', q)
+local b = redis.call('LPOP', q)
+if a == b then
+  -- put one back and wait for someone else
+  redis.call('LPUSH', q, a)
+  return {}
+end
+redis.call('SREM', m, a)
+redis.call('SREM', m, b)
+return {a, b}
+`)
 
 func PairUsers(s *store.Store, tc string, rated bool) (string, string, error) {
-	queue := fmt.Sprintf("lobby:q:%s:%t", tc, rated)
-	res, err := popTwoScript.Run(context.Background(), s.Redis, []string{queue}).Result()
+	q, m := queueKeys(tc, rated)
+	res, err := popTwoDistinctScript.Run(context.Background(), s.Redis, []string{q, m}).Result()
 	if err != nil {
 		return "", "", err
 	}
@@ -75,65 +100,33 @@ type QuickplayRequest struct {
 
 func userIDFromAuth(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
-	log.Printf("Authorization header: %s", h)
-
 	if !strings.HasPrefix(h, "Bearer ") {
-		log.Printf("Auth error: missing Bearer prefix")
 		return "", errors.New("no bearer")
 	}
 	raw := strings.TrimPrefix(h, "Bearer ")
-
-	// Log the first few characters of the token for debugging
-	if len(raw) > 10 {
-		log.Printf("Token prefix: %s...", raw[:10])
-	}
-
 	tok, err := auth.ValidateToken(raw)
 	if err != nil {
-		log.Printf("Token validation error: %T %v", err, err)
 		return "", err
 	}
-
 	sub := tok.Subject()
-	log.Printf("Token subject: %q", sub)
-
 	if sub == "" {
-		log.Printf("Auth error: empty subject")
 		return "", errors.New("no sub")
 	}
 	return sub, nil
 }
 
 func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("QuickplayHandler called with method: %s", r.Method)
-
 	var req QuickplayRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("Request decode error: %v", err)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TC == "" {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("Request data: tc=%s rated=%t", req.TC, req.Rated)
-
-	// Validate TC format upfront (optional but helps catch errors early)
-	if req.TC == "" {
-		http.Error(w, "Invalid time control", http.StatusBadRequest)
-		return
-	}
-
-	// Check if auth package is initialized
-	token := r.Header.Get("Authorization")
-	log.Printf("Raw Authorization header: %q", token)
-
-	uid, err := userIDFromAuth(r)
+	userID, err := userIDFromAuth(r)
 	if err != nil {
-		log.Printf("Authentication error: %v", err)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	log.Printf("Authenticated user ID: %s", uid)
-	userID := uid
 
 	s, err := store.New()
 	if err != nil {
@@ -141,84 +134,61 @@ func QuickplayHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := EnqueueQuickplay(s, userID, req.TC, req.Rated); err != nil {
+	_, err = EnqueueQuickplay(s, userID, req.TC, req.Rated)
+	if err != nil {
 		log.Printf("enqueue error: %v", err)
 		http.Error(w, "Queue error", http.StatusInternalServerError)
 		return
 	}
 
-	// Pairing logic (might need a separate worker, but for now synchronous)
 	white, black, err := PairUsers(s, req.TC, req.Rated)
 	if err != nil {
 		if errors.Is(err, ErrNoPair) {
-			http.Error(w, "No pair", http.StatusAccepted) // Wait or retry
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"queued": true})
 			return
 		}
-		log.Printf("pairing error: %v", err)
 		http.Error(w, "Queue error", http.StatusInternalServerError)
 		return
 	}
 
 	matchID := uuid.Must(uuid.NewV4()).String()
-	// TODO: Parse tc to base_ms, inc_ms, delay_ms
-	baseMs := 300000 // 5 min example
-	incMs := 3000
-	delayMs := 0
-	msWhite := baseMs
-	msBlack := baseMs
+	baseMs, incMs, delayMs := 300000, 3000, 0
+	msWhite, msBlack := baseMs, baseMs
 
-	// Extra validation for player UUIDs
-	if _, err := uuid.FromString(white); err != nil {
-		http.Error(w, "Invalid white player ID", http.StatusInternalServerError)
-		return
-	}
-	if _, err := uuid.FromString(black); err != nil {
-		http.Error(w, "Invalid black player ID", http.StatusInternalServerError)
-		return
-	}
-
-	// Log for debugging
-	log.Printf("pair: white=%q black=%q tc=%s rated=%t", white, black, req.TC, req.Rated)
-
-	// Insert into DB
-	_, err = s.DB.Exec(r.Context(), "INSERT INTO matches (id, side_white, side_black, tc_base_ms, tc_inc_ms, tc_delay_ms, status, side_to_move, last_fen, ms_white, ms_black, rated) VALUES ($1, $2, $3, $4, $5, $6, 'live', 'w', 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', $7, $8, $9)",
+	_, err = s.DB.Exec(r.Context(), `
+INSERT INTO matches (id, side_white, side_black, tc_base_ms, tc_inc_ms, tc_delay_ms, status, side_to_move, last_fen, ms_white, ms_black, rated)
+VALUES ($1,$2,$3,$4,$5,$6,'live','w','rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',$7,$8,$9)`,
 		matchID, white, black, baseMs, incMs, delayMs, msWhite, msBlack, req.Rated)
 	if err != nil {
-		log.Printf("db insert error: %T %v", err, err)
+		log.Printf("db insert error: %v", err)
 		http.Error(w, "DB error", http.StatusInternalServerError)
 		return
 	}
 
-	// Generate matchKey (32 bytes)
 	matchKey := make([]byte, 32)
-	_, err = rand.Read(matchKey)
-	if err != nil {
+	if _, err := rand.Read(matchKey); err != nil {
 		http.Error(w, "Crypto error", http.StatusInternalServerError)
 		return
 	}
 	matchKeyStr := base64.StdEncoding.EncodeToString(matchKey)
-
-	// Generate joinToken (short-lived)
 	joinToken := uuid.Must(uuid.NewV4()).String()
 
-	// TODO: Mint ICE creds
+	turnSecret := os.Getenv("TURN_SECRET")
+	iceCreds := generateTURNCreds(userID, 10*time.Minute, turnSecret)
 
-	response := map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"matchId":   matchID,
 		"sides":     map[string]string{"white": white, "black": black},
 		"matchKey":  matchKeyStr,
 		"joinToken": joinToken,
-		// "webrtcConfig": ...
-	}
-	turnSecret := os.Getenv("TURN_SECRET")
-	iceCreds := generateTURNCreds(userID, 10*time.Minute, turnSecret)
-	response["webrtcConfig"] = map[string]interface{}{
-		"iceServers": []map[string]interface{}{
-			{"urls": "stun:your.stun.server:3478"},
-			{"urls": "turn:your.turn.server:3478", "username": iceCreds["username"], "credential": iceCreds["password"]},
+		"webrtcConfig": map[string]any{
+			"iceServers": []map[string]any{
+				{"urls": "stun:your.stun.server:3478"},
+				{"urls": "turn:your.turn.server:3478", "username": iceCreds["username"], "credential": iceCreds["password"]},
+			},
 		},
-	}
-	json.NewEncoder(w).Encode(response)
+	})
 }
 
 func ResumeHandler(w http.ResponseWriter, r *http.Request) {
@@ -264,9 +234,5 @@ func generateTURNCreds(userID string, ttl time.Duration, secret string) map[stri
 	username := fmt.Sprintf("%d:%s", expiry, userID)
 	h := hmac.New(sha1.New, []byte(secret))
 	h.Write([]byte(username))
-	password := base64.StdEncoding.EncodeToString(h.Sum(nil))
-	return map[string]string{
-		"username": username,
-		"password": password,
-	}
+	return map[string]string{"username": username, "password": base64.StdEncoding.EncodeToString(h.Sum(nil))}
 }
