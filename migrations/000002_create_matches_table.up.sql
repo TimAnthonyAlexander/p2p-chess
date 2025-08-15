@@ -1,0 +1,20 @@
+CREATE TABLE matches (
+  id UUID PRIMARY KEY,
+  side_white UUID NOT NULL REFERENCES users(id),
+  side_black UUID NOT NULL REFERENCES users(id),
+  tc_base_ms INT NOT NULL,
+  tc_inc_ms INT NOT NULL,
+  tc_delay_ms INT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'live', 'finished', 'aborted', 'relayed')),
+  side_to_move CHAR(1) NOT NULL CHECK (side_to_move IN ('w', 'b')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  result TEXT,
+  reason TEXT,
+  last_seq INT DEFAULT 0,
+  last_fen TEXT NOT NULL DEFAULT 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+  ms_white INT NOT NULL,
+  ms_black INT NOT NULL,
+  rated BOOL NOT NULL DEFAULT FALSE
+);
